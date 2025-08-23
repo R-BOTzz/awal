@@ -1,118 +1,85 @@
 "use strict";
 
-const { jidDecode } = require("baileys");
-const fs = require("node:fs");
-const path = require("node:path");
+const Ctx = require("../Classes/Ctx.js");
+const Functions = require("../Helper/Functions.js");
 
-const arrayMove = (array, oldIndex, newIndex) => {
-    if (oldIndex < 0 || oldIndex >= array.length) return array;
+async function Commands(self, runMiddlewares) {
+    return new Promise((resolve, reject) => {
+        let {
+            cmd,
+            prefix,
+            m
+        } = self;
+        
+        if (!m.message || m.key.remoteJid === "status@broadcast" || m.key.remoteJid.endsWith("@newsletter") || (m.key.participant && m.key.participant.endsWith("@lid"))) return resolve();
+        if (!self.selfReply && m.key.fromMe) return resolve();
 
-    const item = array[oldIndex];
-    const movedArray = [...array];
+        const hasHears = Array.from(self.hearsMap.values()).filter(hear => 
+            hear.name === m.content || 
+            hear.name === m.messageType || 
+            new RegExp(hear.name).test(m.content) || 
+            (Array.isArray(hear.name) && hear.name.includes(m.content))
+        );
 
-    movedArray.splice(oldIndex, 1);
-    movedArray.splice(newIndex, 0, item);
-
-    return movedArray;
-};
-
-const getContentType = (content) => {
-    const keys = Object.keys(content);
-    const type = keys.find(key => 
-        (key === "conversation" || key.endsWith("Message") || key.endsWith("V2") || key.endsWith("V3")) && 
-        key !== "senderKeyDistributionMessage"
-    );
-    return type;
-};
-
-const getContentFromMsg = (msg) => {
-    if (!msg?.message) return "";
-
-    const type = getContentType(msg.message);
-    if (!type || !msg.message[type]) return "";  // Ensure there's a valid type and content
-
-    const contentHandlers = {
-        interactiveResponseMessage: () => {
-            let text = msg.message.interactiveResponseMessage.selectedButtonId || "";
-            if (!text && msg.message.interactiveResponseMessage.nativeFlowResponseMessage) {
-                const params = msg.message.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
-                if (params) {
-                    const parsedParams = JSON.parse(params);
-                    text = parsedParams.id || parsedParams.selectedId || parsedParams.button_id || "";
-                }
-                return text;
-            }
-        },
-        conversation: () => msg.message.conversation,
-        imageMessage: () => msg.message.imageMessage?.caption || "",
-        videoMessage: () => msg.message.videoMessage?.caption || "",
-        documentMessageWithCaption: () => msg.message.documentMessageWithCaption?.caption || "",
-        extendedTextMessage: () => msg.message.extendedTextMessage?.text || "",
-        buttonsResponseMessage: () => msg.message.buttonsResponseMessage?.selectedButtonId || "",
-        listResponseMessage: () => msg.message.listResponseMessage?.singleSelectReply?.selectedRowId || "",
-        templateButtonReplyMessage: () => msg.message.templateButtonReplyMessage?.selectedId || "",
-        messageContextInfo: () => msg.message.buttonsResponseMessage?.selectedButtonId || msg.message.listResponseMessage?.singleSelectReply.selectedRowId || "",
-        editedMessage: () => msg.message.protocolMessage?.editedMessage?.conversation || "",
-        protocolMessage: () => msg.message.protocolMessage?.editedMessage?.extendedTextMessage?.text ||
-                               msg.message.protocolMessage?.editedMessage?.conversation ||
-                               msg.message.protocolMessage?.editedMessage?.imageMessage?.caption ||
-                               msg.message.protocolMessage?.editedMessage?.videoMessage?.caption || ""
-    };
-    
-    if (contentHandlers[type]) {
-        return contentHandlers[type]() || "";
-    } else {
-        console.warn(`No handler found for content type: ${type}`);
-        return "";
-    }
-};
-
-const getSender = (msg, client) => msg.key.fromMe ? client.user.id : msg.key.participant || msg.key.remoteJid;
-
-const walk = (dir, callback) => {
-    if (!fs.existsSync(dir)) return;
-
-    const processEntry = (entry) => {
-        const filepath = path.join(dir, entry);
-        const stats = fs.statSync(filepath);
-
-        if (stats.isDirectory()) {
-            walk(filepath, callback);
-        } else if (stats.isFile()) {
-            callback(filepath, stats);
+        if (hasHears.length) {
+            hasHears.forEach(hear => {
+                hear.code(new Ctx({
+                    used: {
+                        hears: m.content
+                    },
+                    args: [],
+                    self,
+                    client: self.core
+                }));
+            });
+            return resolve();
         }
-    };
 
-    fs.readdirSync(dir).forEach(processEntry);
-};
+        const commandsList = Array.from(cmd?.values() ?? []);
+        let selectedPrefix;
 
-const decodeJid = (jid) => {
-    if (!jid) return null;
+        if (Array.isArray(prefix)) {
+            if (prefix[0] == "") {
+                const emptyIndex = prefix.findIndex(_prefix => _prefix.includes(""));
+                prefix = Functions.arrayMove(prefix, emptyIndex - 1, prefix.length - 1);
+            } else {
+                selectedPrefix = prefix.find(_prefix => m.content.startsWith(_prefix));
+            }
+        } else if (prefix instanceof RegExp) {
+            const match = m.content.match(prefix);
+            if (match) selectedPrefix = match[0];
+        }
 
-    if (/:\d+@/gi.test(jid)) {
-        const decoded = jidDecode(jid);
-        return decoded?.user && decoded?.server ? `${decoded.user}@${decoded.server}` : jid;
-    }
-    return jid;
-};
+        if (!selectedPrefix) return resolve();
 
-const getPushname = (jid, pushNames = {}) => {
-    const decoded = decodeJid(jid);
-    return decoded ? pushNames[decoded] || decoded : null;
-};
+        const args = m.content.slice(selectedPrefix.length).trim().split(/\s+/) || [];
+        const commandName = args?.shift().toLowerCase();
+        if (!commandName) return resolve();
 
-const getId = (jid) => {
-    const decoded = jidDecode(jid);
-    return decoded?.user || jid;
-};
+        const matchedCommands = commandsList.filter(command => 
+            command.name?.toLowerCase() === commandName || 
+            (Array.isArray(command.aliases) ? command.aliases.includes(commandName) : command.aliases === commandName)
+        );
 
-module.exports = {
-    arrayMove,
-    getContentType,
-    getContentFromMsg,
-    getSender,
-    walk,
-    decodeJid,
-    getPushname,
-    getId
-};
+        if (!matchedCommands.length) return resolve();
+
+        const ctx = new Ctx({
+            used: {
+                prefix: selectedPrefix,
+                command: commandName
+            },
+            args,
+            self,
+            client: self.core
+        });
+
+        runMiddlewares(ctx).then(shouldContinue => {
+            if (!shouldContinue) return resolve();
+
+            matchedCommands.forEach(command => command.code(ctx));
+            resolve();
+        }).catch(reject);
+    });
+}
+
+module.exports = Commands;
