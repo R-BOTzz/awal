@@ -1,8 +1,6 @@
 "use strict";
 
-const {
-    jidDecode
-} = require("baileys");
+const { jidDecode } = require("baileys");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -19,8 +17,11 @@ const arrayMove = (array, oldIndex, newIndex) => {
 };
 
 const getContentType = (content) => {
-    const keys = Object.keys(content)
-    const type = keys.find(key => (key === "conversation" || key.endsWith("Message") || key.endsWith("V2") || key.endsWith("V3")) && key !== "senderKeyDistributionMessage")
+    const keys = Object.keys(content);
+    const type = keys.find(key => 
+        (key === "conversation" || key.endsWith("Message") || key.endsWith("V2") || key.endsWith("V3")) && 
+        key !== "senderKeyDistributionMessage"
+    );
     return type;
 };
 
@@ -28,7 +29,7 @@ const getContentFromMsg = (msg) => {
     if (!msg?.message) return "";
 
     const type = getContentType(msg.message);
-    if (!type) return "";
+    if (!type || !msg.message[type]) return "";  // Ensure there's a valid type and content
 
     const contentHandlers = {
         interactiveResponseMessage: () => {
@@ -51,12 +52,19 @@ const getContentFromMsg = (msg) => {
         listResponseMessage: () => msg.message.listResponseMessage?.singleSelectReply?.selectedRowId || "",
         templateButtonReplyMessage: () => msg.message.templateButtonReplyMessage?.selectedId || "",
         messageContextInfo: () => msg.message.buttonsResponseMessage?.selectedButtonId || msg.message.listResponseMessage?.singleSelectReply.selectedRowId || "",
-        messageContextInfo: () => msg.message.templateButtonReplyMessage?.selectedId || "",
         editedMessage: () => msg.message.protocolMessage?.editedMessage?.conversation || "",
-        protocolMessage: () => msg.message.protocolMessage?.editedMessage?.extendedTextMessage?.text || msg.message.protocolMessage?.editedMessage?.conversation || msg.message.protocolMessage?.editedMessage?.imageMessage?.caption || msg.message.protocolMessage?.editedMessage?.videoMessage?.caption || ""
+        protocolMessage: () => msg.message.protocolMessage?.editedMessage?.extendedTextMessage?.text ||
+                               msg.message.protocolMessage?.editedMessage?.conversation ||
+                               msg.message.protocolMessage?.editedMessage?.imageMessage?.caption ||
+                               msg.message.protocolMessage?.editedMessage?.videoMessage?.caption || ""
     };
-
-    return contentHandlers[type]() || "";
+    
+    if (contentHandlers[type]) {
+        return contentHandlers[type]() || "";
+    } else {
+        console.warn(`No handler found for content type: ${type}`);
+        return "";
+    }
 };
 
 const getSender = (msg, client) => msg.key.fromMe ? client.user.id : msg.key.participant || msg.key.remoteJid;
