@@ -320,9 +320,11 @@ class Client {
                 return;
             }
 
-            const PHONENUMBER_MCC = (await fetch("https://gist.githubusercontent.com/itsreimau/3da60a4937a66e4b1ac34970500e926b/raw/5f4a57faf6d0133c37db60192915d4686e865329/PHONENUMBER_MCC.json")).json();
-            if (!PHONENUMBER_MCC.some(mcc => this.phoneNumber.startsWith(mcc))) {
-                this.consolefy.error("phoneNumber format must be like: 62xxx (starts with country code).");
+            const res = await fetch("https://gist.githubusercontent.com/itsreimau/3da60a4937a66e4b1ac34970500e926b/raw/5f4a57faf6d0133c37db60192915d4686e865329/PHONENUMBER_MCC.json");
+            const PHONENUMBER_MCC = await res.json();
+
+            if (!Array.isArray(PHONENUMBER_MCC)) {
+                this.consolefy.error("Invalid MCC data received.");
                 this.consolefy.resetTag();
                 return;
             }
